@@ -8,9 +8,12 @@ from .utils import (
 from .dates import ELECTION_DAY_BY_KEY, compute_federal_general_election_day
 from .constants import USPS
 
-def _phase_from_race_label(race_label: str) -> str:
-    low = race_label.lower()
-    if "primary" in low: return "Primary"
+def _phase_from_race_label(race_label: str, state: str | None = None) -> str:
+    low = (race_label or "").lower()
+    if state and state.lower() == "louisiana" and "nonpartisan" in low:
+        return "General"
+    if "primary" in low:
+        return "Primary"
     return "General"
 
 def _is_runoff_from_label(race_label: str) -> bool:
@@ -59,7 +62,7 @@ def build_position_elections(races_df: pd.DataFrame, candidates_df: pd.DataFrame
     for state_name, race_label, year in sorted(keys_all):
         pure_state = normalize_state_name(state_name)
         state_code = USPS.get(pure_state, pure_state[:2].upper())
-        phase = _phase_from_race_label(race_label)
+        phase = _phase_from_race_label(race_label, pure_state)
         is_primary = (phase == "Primary")
         is_runoff = _is_runoff_from_label(race_label)
         is_unexpired = _is_unexpired_from_label(race_label)
