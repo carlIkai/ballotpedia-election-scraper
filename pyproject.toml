@@ -1,0 +1,18 @@
+[project]
+name = "bp-scraper"
+version = "0.1.0"
+description = "Ballotpedia scraper (reorganized, no shims)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.32",
+  "beautifulsoup4>=4.12",
+  "pandas>=2.2"
+]
+
+[project.scripts]
+bp-scraper = "bp_scraper.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
