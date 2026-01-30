@@ -13,6 +13,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
@@ -32,13 +33,14 @@ USPS = {
     "Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA",
     "West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC"
 }
+
 USPS_INV = {v: k for k, v in USPS.items()}
 
 HOUSE_AT_LARGE_STATES = {
     "Alaska","Delaware","North Dakota","South Dakota","Vermont","Wyoming","District of Columbia"
 }
 
-PCT_RE   = re.compile(r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%")
+PCT_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%")
 
 PARTY_FROM_CLASS = {
     "cc-democratic": "Democratic",
@@ -84,24 +86,65 @@ EXTRA_PARTY_KEYS = {
 SENATE_OVERVIEW_TEMPLATE = "United_States_Senate_elections,_{year}"
 HOUSE_OVERVIEW_TEMPLATE  = "United_States_House_of_Representatives_elections,_{year}"
 
-CANON_SENATE_STATE_URL = re.compile(r"/United_States_Senate_(special_)?election_in_[^,]+,_\d{4}$", re.I)
+STATE_ELECTIONS_OVERVIEW_TEMPLATE = "{state}_elections,_{year}"
+
+CANON_SENATE_STATE_URL = re.compile(
+    r"/United_States_Senate_(special_)?election_in_[^,]+,_\d{4}$", re.I
+)
+
 APOS_CHAR_CLASS = r"(?:'|\u2019)"
 APOS_ENC_CLASS = r"(?:%27|%E2%80%99)"
 APOS_ANY = rf"(?:{APOS_ENC_CLASS}|{APOS_CHAR_CLASS})"
+
 CANON_HOUSE_STATE_URL = re.compile(
     r"/United_States_House(_of_Representatives)?_elections?_in_[^,]+,_\d{4}$",
     re.I
 )
+
 CANON_HOUSE_DISTRICT_URL = re.compile(
     rf"/[A-Za-z0-9_%\-\u2019']+(?:At[-_]large|[0-9]{{1,2}}(?:st|nd|rd|th))_Congressional_District_election,_\d{{4}}$",
     re.I
 )
+
+CANON_STATE_GOV_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_gubernatorial_election,_(19|20)\d{2}$", re.I
+)
+
+CANON_STATE_LT_GOV_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_lieutenant_gubernatorial_election,_(19|20)\d{2}$", re.I
+)
+
+CANON_STATE_AG_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_attorney_general_election,_(19|20)\d{2}$", re.I
+)
+
+CANON_STATE_LOWER_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_(?:house_of_delegates|house_of_representatives|state_house)_election,_(19|20)\d{2}$",
+    re.I
+)
+
+CANON_STATE_UPPER_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_(?:state_senate|senate)_election,_(19|20)\d{2}$",
+    re.I
+)
+
+CANON_STATE_LEG_DISTRICT_URL = re.compile(
+    r"/[A-Za-z0-9_%\-\u2019']+_(?:house_of_delegates|house_of_representatives|state_house|state_senate|senate)_district_\d{1,3}_election,_(19|20)\d{2}$",
+    re.I
+)
+
+
+CANON_STATE_LTGOV_URL = CANON_STATE_LT_GOV_URL
+CANON_STATE_ATTORNEY_GENERAL_URL = CANON_STATE_AG_URL
+CANON_STATE_STATE_LOWER_URL = CANON_STATE_LOWER_URL
+CANON_STATE_STATE_UPPER_URL = CANON_STATE_UPPER_URL
 
 HEADER_OK_PATTERNS_GENERAL = [
     re.compile(r"\bGeneral(?:\s+runoff)?\s+election\b", re.I),
     re.compile(r"\bGeneral(?:\s+runoff)?\s+election\s+results\b", re.I),
     re.compile(r"\bRunoff\s+election\b", re.I),
 ]
+
 PRIMARY_WORD_RE = re.compile(r"\bprimary\b", re.I)
 PRIMARY_RUNOFF_RE = re.compile(r"\brunoff\b", re.I)
 LA_PRIMARY_PATTERNS = [re.compile(r"\bNonpartisan\s+blanket\s+primary\b", re.I)]
@@ -109,8 +152,10 @@ LA_PRIMARY_PATTERNS = [re.compile(r"\bNonpartisan\s+blanket\s+primary\b", re.I)]
 PRIMARY_PARTY_MAP = {
     "democratic":"Democratic","republican":"Republican","libertarian":"Libertarian","green":"Green",
     "independent":"Independent","independent american":"Independent American","nonpartisan":"Nonpartisan",
-    "working families":"Working Families","aloha":"Aloha ʻĀina","constitution":"Constitution","progressive":"Progressive",
+    "working families":"Working Families","aloha":"Aloha ʻĀina",
+    "constitution":"Constitution","progressive":"Progressive",
 }
+
 YEAR_ONLY_RE = re.compile(r"\b(19|20)\d{2}\b")
 PAST_ELEX_RE = re.compile(r"\b(past|previous)\s+elections\b", re.I)
 

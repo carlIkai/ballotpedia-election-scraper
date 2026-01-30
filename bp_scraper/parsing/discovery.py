@@ -1,8 +1,14 @@
 from __future__ import annotations
+
 import re
 from typing import List, Optional, Tuple
+
 from bp_scraper.core.constants import (
-    BASE, HOUSE_AT_LARGE_STATES, HOUSE_OVERVIEW_TEMPLATE, SENATE_OVERVIEW_TEMPLATE,
+    BASE,
+    HOUSE_AT_LARGE_STATES,
+    HOUSE_OVERVIEW_TEMPLATE,
+    SENATE_OVERVIEW_TEMPLATE,
+    STATE_ELECTIONS_OVERVIEW_TEMPLATE,
 )
 from bp_scraper.io.http import get_soup, canonicalize_url
 from bp_scraper.parsing.normalize import nws, normalize_state_name, strip_parenthetical
@@ -13,13 +19,15 @@ def discover_state_pages(
     chamber: str,
     verbose: bool = False,
     delay: Optional[float] = None,
-    retries: Optional[int] = None
+    retries: Optional[int] = None,
 ) -> List[Tuple[str, str, str]]:
     overview_template = SENATE_OVERVIEW_TEMPLATE if chamber == "senate" else HOUSE_OVERVIEW_TEMPLATE
     overview_url = BASE + overview_template.format(year=year)
+
     soup = get_soup(overview_url, delay=delay, retries=retries)
 
     discovered_entries: List[Tuple[str, str, str]] = []
+
     for anchor_tag in soup.select("a[href]"):
         href_value = anchor_tag.get("href", "")
         full_url = canonicalize_url(href_value, year, chamber)
@@ -36,13 +44,16 @@ def discover_state_pages(
         if not normalized_state:
             continue
 
-        race_label = "U.S. Senate" if chamber == "senate" else "U.S. House"
-        if chamber == "senate" and "United_States_Senate_special_election_in_" in full_url:
-            race_label = "U.S. Senate (special)"
+        low_url = (full_url or "").lower()
+        if chamber == "senate":
+            race_label = "U.S. Senate (special)" if "united_states_senate_special_election_in_" in low_url else "U.S. Senate"
+        else:
+            race_label = "U.S. House"
 
         discovered_entries.append((normalized_state, race_label, full_url))
 
-    seen_state_race_keys, deduped_entries = set(), []
+    seen_state_race_keys: set[tuple[str, str]] = set()
+    deduped_entries: List[Tuple[str, str, str]] = []
     for normalized_state, race_label, page_url in discovered_entries:
         dedupe_key = (normalized_state, race_label)
         if dedupe_key in seen_state_race_keys:
@@ -53,6 +64,7 @@ def discover_state_pages(
     if verbose:
         label = "Senate" if chamber == "senate" else "House"
         print(f"[overview] discovered {len(deduped_entries)} {label} state pages for {year}")
+
     return deduped_entries
 
 
@@ -62,9 +74,10 @@ def discover_house_district_pages(
     year: int,
     verbose: bool = False,
     delay: Optional[float] = None,
-    retries: Optional[int] = None
+    retries: Optional[int] = None,
 ) -> List[str]:
     from bp_scraper.core.constants import CANON_HOUSE_DISTRICT_URL
+
     soup = get_soup(state_page_url, delay=delay, retries=retries)
 
     district_links: List[str] = []
@@ -78,7 +91,8 @@ def discover_house_district_pages(
         if CANON_HOUSE_DISTRICT_URL.search(full_url):
             district_links.append(full_url)
 
-    seen_urls, unique_district_links = set(), []
+    seen_urls: set[str] = set()
+    unique_district_links: List[str] = []
     for candidate_url in district_links:
         if candidate_url in seen_urls:
             continue
@@ -86,10 +100,136 @@ def discover_house_district_pages(
         unique_district_links.append(candidate_url)
 
     if not unique_district_links:
-        if re.search(r"/United_States_House(_of_Representatives)?_election_in_[^,]+,_\d{4}$", state_page_url, re.I):
+        if re.search(
+            r"/United_States_House(_of_Representatives)?_election_in_[^,]+,_\d{4}$",
+            state_page_url,
+            re.I,
+        ):
             unique_district_links = [state_page_url]
 
     if verbose:
-        print(f"[overview] {state_page_url} -> {len(unique_district_links)} district links"
-              f"{' (check regex/markup)' if len(unique_district_links) == 0 else ''}")
+        print(
+            f"[overview] {state_page_url} -> {len(unique_district_links)} district links"
+            f"{' (check regex/markup)' if len(unique_district_links) == 0 else ''}"
+        )
+
     return unique_district_links
+
+
+_OFFICE_TOKEN_TO_OFFICE = {
+    "governor": "governor",
+    "lt_governor": "lt_governor",
+    "attorney_general": "attorney_general",
+    "state_lower": "state_lower",
+    "state_upper": "state_upper",
+    "state_leg_districts": "state_leg_districts",
+}
+
+
+def _normalize_offices(offices: Optional[List[str]]) -> Optional[set[str]]:
+    if not offices:
+        return None
+    cleaned: set[str] = set()
+    for raw in offices:
+        tok = (raw or "").strip().lower()
+        if not tok:
+            continue
+        mapped = _OFFICE_TOKEN_TO_OFFICE.get(tok)
+        if mapped:
+            cleaned.add(mapped)
+    return cleaned or None
+
+
+def discover_state_election_pages(
+    year: int,
+    state: str,
+    offices: Optional[List[str]] = None,
+    verbose: bool = False,
+    delay: Optional[float] = None,
+    retries: Optional[int] = None,
+) -> List[Tuple[str, str, str]]:
+    normalized_state = normalize_state_name(state)
+    state_slug = (normalized_state or "").replace(" ", "_")
+    overview_url = BASE + STATE_ELECTIONS_OVERVIEW_TEMPLATE.format(state=state_slug, year=year)
+
+    soup = get_soup(overview_url, delay=delay, retries=retries)
+
+    wanted = _normalize_offices(offices)
+    discovered: List[Tuple[str, str, str]] = []
+
+    for a in soup.select("a[href]"):
+        href = a.get("href", "")
+        if not href:
+            continue
+
+        canon = canonicalize_url(href, year, chamber="state")
+        if not canon:
+            continue
+
+        office_key = _office_from_state_url(canon)
+        if not office_key:
+            continue
+        if wanted is not None and office_key not in wanted:
+            continue
+
+        race_label = _race_label_for_state_office(normalized_state, office_key, canon)
+        discovered.append((normalized_state, race_label, canon))
+
+    seen_urls: set[str] = set()
+    out: List[Tuple[str, str, str]] = []
+    for st, label, url in discovered:
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        out.append((st, label, url))
+
+    if verbose:
+        offices_label = ",".join(sorted(wanted)) if wanted else "all"
+        print(
+            f"[overview] discovered {len(out)} state election page(s) for {normalized_state} {year} "
+            f"(offices={offices_label})"
+        )
+
+    return out
+
+
+def _office_from_state_url(url: str) -> Optional[str]:
+    low = (url or "").lower()
+
+    if "_gubernatorial_election,_" in low:
+        return "governor"
+    if "_lieutenant_gubernatorial_election,_" in low:
+        return "lt_governor"
+    if "_attorney_general_election,_" in low:
+        return "attorney_general"
+
+    if re.search(r"_(house_of_delegates|house_of_representatives|state_house)_election,_", low):
+        return "state_lower"
+    if re.search(r"_(state_senate|senate)_election,_", low):
+        return "state_upper"
+
+    if re.search(
+        r"_(house_of_delegates|house_of_representatives|state_house|state_senate|senate)_district_\d+_election,_",
+        low,
+    ):
+        return "state_leg_districts"
+
+    return None
+
+
+def _race_label_for_state_office(state_name: str, office_key: str, url: str) -> str:
+    if office_key == "governor":
+        return "Governor"
+    if office_key == "lt_governor":
+        return "Lieutenant Governor"
+    if office_key == "attorney_general":
+        return "Attorney General"
+    if office_key == "state_lower":
+        if normalize_state_name(state_name).lower() == "virginia":
+            return "House of Delegates"
+        return "State House"
+    if office_key == "state_upper":
+        return "State Senate"
+    if office_key == "state_leg_districts":
+        return "State Legislature"
+    return "State Office"

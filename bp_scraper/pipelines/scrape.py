@@ -13,7 +13,7 @@ from bp_scraper.parsing.candidates import (
     scan_section_party_keywords,
 )
 from bp_scraper.parsing.normalize import normalize_state_name, norm_name
-from bp_scraper.core.constants import HOUSE_AT_LARGE_STATES
+from bp_scraper.core.constants import HOUSE_AT_LARGE_STATES, PAST_ELEX_RE
 from bp_scraper.transform.summarize import summarize_race
 
 
@@ -99,17 +99,67 @@ def _state_from_url(url: str, year: int) -> str:
     return normalize_state_name(path)
 
 
-def _race_label_from_url(url: str, chamber: str, state_for_fallback: Optional[str] = None) -> str:
+def _race_label_from_url(
+    url: str,
+    chamber: str,
+    state_for_fallback: Optional[str] = None,
+    scope: str = "federal",
+) -> str:
+    low = (url or "").lower()
+    state_norm = normalize_state_name(state_for_fallback).lower() if state_for_fallback else ""
+
+    if scope == "state":
+        if "lieutenant_gubernatorial_election" in low:
+            return "Lieutenant Governor"
+        if "gubernatorial_election" in low:
+            return "Governor"
+        if "attorney_general_election" in low:
+            return "Attorney General"
+
+        if ("gubernatorial" in low) and ("lieutenant" in low) and ("election" in low):
+            return "Governor / Lieutenant Governor"
+
+        if any(tok in low for tok in [
+            "state_senate_election",
+            "state_senate_elections",
+            "state_senate",
+            "senate_elections",
+        ]) and ("state" in low or "legislature" in low or "state_senate" in low):
+            return "State Senate"
+
+        if any(tok in low for tok in [
+            "house_of_delegates_election",
+            "house_of_delegates_elections",
+            "house_of_delegates",
+            "state_house_election",
+            "state_house_elections",
+            "state_house",
+            "state_assembly_election",
+            "state_assembly_elections",
+            "state_assembly",
+            "house_of_representatives_election",
+            "house_of_representatives_elections",
+            "house_of_representatives",
+        ]):
+            if state_norm == "virginia":
+                return "House of Delegates"
+            return "State House"
+
+        return "State race"
+
+    
     if chamber == "senate":
-        return "U.S. Senate (special)" if "United_States_Senate_special_election_in_" in url else "U.S. Senate"
-    else:
-        district = _district_from_url(url)
-        base_label = "U.S. House"
-        if district:
-            return f"{base_label} — {district}"
-        if state_for_fallback and normalize_state_name(state_for_fallback) in HOUSE_AT_LARGE_STATES:
-            return f"{base_label} — At-large"
-        return base_label
+        return "U.S. Senate (special)" if "united_states_senate_special_election_in_" in low else "U.S. Senate"
+
+    district = _district_from_url(url or "")
+    base_label = "U.S. House"
+    if district:
+        return f"{base_label} — {district}"
+    if state_for_fallback and normalize_state_name(state_for_fallback) in HOUSE_AT_LARGE_STATES:
+        return f"{base_label} — At-large"
+    return base_label
+
+
 
 
 def _primary_party_from_label(label: str):
@@ -156,6 +206,46 @@ def _looks_like_results_table_relaxed(table_node: BeautifulSoup) -> bool:
     data_cell_texts = [(data_cell.get_text(" ") or "").strip() for data_cell in table_node.find_all("td")]
     percent_like_count = sum(bool(re.search(r"\d+(?:\.\d+)?\s*%$", text_value)) for text_value in data_cell_texts)
     return percent_like_count >= 2
+
+
+# --- NEW: scope-aware sweep filtering helpers ---
+def _nearby_heading_text(table_node: BeautifulSoup, max_headings: int = 4) -> str:
+    # Pull a small amount of context so we can avoid "Past elections" tables.
+    pieces: List[str] = []
+    for header in table_node.find_all_previous(["h1", "h2", "h3", "h4"], limit=max_headings):
+        t = (header.get_text(" ") or "").strip()
+        if t:
+            pieces.append(t)
+    return " | ".join(pieces)
+
+
+def _prefer_tables_for_year(tables: List[BeautifulSoup], year: int, primary: bool) -> List[BeautifulSoup]:
+    want_year = str(year)
+
+    scored: List[Tuple[int, BeautifulSoup]] = []
+    for t in tables:
+        ctx = (_nearby_heading_text(t) or "").lower()
+
+        if PAST_ELEX_RE.search(ctx or ""):
+            continue
+
+        score = 0
+        if want_year in ctx:
+            score += 3
+        if primary and ("primary" in ctx):
+            score += 2
+        if (not primary) and ("general" in ctx):
+            score += 2
+        scored.append((score, t))
+
+    if not scored:
+        return tables
+
+    best = max(score for score, _ in scored)
+    if best <= 0:
+        return tables
+
+    return [t for score, t in scored if score == best]
 
 
 _CHECKMARK_RE = re.compile(r"[✔✓★]")
@@ -431,10 +521,11 @@ def scrape_page(
     primary: bool = False,
     delay: Optional[float] = None,
     retries: Optional[int] = None,
+    scope: str = "federal",
 ) -> Tuple[List[dict], List[Dict[str, object]], List[dict]]:
     soup = get_soup(url, delay=delay, retries=retries)
     state = normalize_state_name(_state_from_url(url, year))
-    base_race_label = _race_label_from_url(url, chamber, state_for_fallback=state)
+    base_race_label = _race_label_from_url(url, chamber, state_for_fallback=state, scope=scope)
 
     try:
         parse_election_dates_from_page(soup, state, year)
@@ -520,6 +611,9 @@ def scrape_page(
                 if id(table_node) not in seen_table_ids:
                     seen_table_ids.add(id(table_node))
                     unique_sweep_tables.append(table_node)
+
+            unique_sweep_tables = _prefer_tables_for_year(unique_sweep_tables, year=year, primary=False)
+
             if unique_sweep_tables and verbose:
                 print(f"[debug] sweep: parsing {len(unique_sweep_tables)} fallback table(s) — {url}")
             for table_node in unique_sweep_tables:
@@ -729,7 +823,7 @@ def scrape_page(
                 card.setdefault("total_votes", votes_map.get(clean_name))
 
             winner_norm = norm_name(summary.get("winner_name") or "")
-            is_jungle_primary, jungle_top_n = _is_jungle_label(state, label)
+            is_jungle_primary, _jungle_top_n = _is_jungle_label(state, label)
             advancers_norm_set = set(norm_name(name) for name in (summary.get("advancers") or []))
             for card in candidate_cards:
                 clean_name = card["name_clean"]

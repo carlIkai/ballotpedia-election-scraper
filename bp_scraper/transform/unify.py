@@ -2,10 +2,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from bp_scraper.parsing.normalize import (
-    normalize_state_name, display_clean_name, display_clean_list, b64_id, slugify, race_title_for_chamber
+    normalize_state_name, display_clean_name, b64_id
 )
 from bp_scraper.parsing.dates import ELECTION_DAY_BY_KEY, compute_federal_general_election_day
 from bp_scraper.core.constants import USPS
+
 
 def _phase_from_race_label(race_label: str, state: str | None = None) -> str:
     low = (race_label or "").lower()
@@ -15,29 +16,45 @@ def _phase_from_race_label(race_label: str, state: str | None = None) -> str:
         return "Primary"
     return "General"
 
+
 def _is_runoff_from_label(race_label: str) -> bool:
     return "runoff" in (race_label or "").lower()
+
 
 def _is_unexpired_from_label(race_label: str) -> bool:
     return "(special)" in (race_label or "").lower()
 
+
 def _election_day_for(state_name: str, year: int, phase: str) -> Optional[str]:
     return ELECTION_DAY_BY_KEY.get((state_name, year, phase))
 
-def _election_day_or_default(state_name: str, year: int, phase: str) -> Optional[str]:
+
+def _election_day_or_default(state_name: str, year: int, phase: str, scope: str = "federal") -> Optional[str]:
     iso = _election_day_for(state_name, year, phase)
-    if not iso and phase == "General":
+
+    if (not iso) and (phase == "General") and (scope == "federal"):
         return compute_federal_general_election_day(year)
+
     return iso
+
 
 def _district_from_race_label(race_label: str) -> Optional[str]:
     import re
     m = re.search(r"\bDistrict\s+(\d+)\b", race_label or "", re.I)
-    if m: return f"District {int(m.group(1))}"
-    if re.search(r"\bAt[-\s]?large\b", race_label or "", re.I): return "At-large"
+    if m:
+        return f"District {int(m.group(1))}"
+    if re.search(r"\bAt[-\s]?large\b", race_label or "", re.I):
+        return "At-large"
     return None
 
-def build_position_elections(races_df: pd.DataFrame, candidates_df: pd.DataFrame, chamber: str) -> List[Dict[str, Any]]:
+
+def build_position_elections(
+    races_df: pd.DataFrame,
+    candidates_df: pd.DataFrame,
+    chamber: str,
+    *,
+    scope: str = "federal",
+) -> List[Dict[str, Any]]:
     if races_df.empty and candidates_df.empty:
         return []
 
@@ -61,26 +78,42 @@ def build_position_elections(races_df: pd.DataFrame, candidates_df: pd.DataFrame
     for state_name, race_label, year in sorted(keys_all):
         pure_state = normalize_state_name(state_name)
         state_code = USPS.get(pure_state, pure_state[:2].upper())
+
         phase = _phase_from_race_label(race_label, pure_state)
         is_primary = (phase == "Primary")
         is_runoff = _is_runoff_from_label(race_label)
         is_unexpired = _is_unexpired_from_label(race_label)
 
-        if chamber == "senate":
-            position_name = f"U.S. Senate - {pure_state}"
-            position_id = b64_id("Position", "U.S. Senate", state_code)
+        if scope == "state":
+            pos_level = "STATE"
+            office = (race_label or "").strip()
+
+            if office in {"Governor", "Lieutenant Governor", "Attorney General"}:
+                position_name = f"{office} - {pure_state}"
+                position_id = b64_id("Position", office, state_code)
+            elif office in {"State Senate", "State House", "House of Delegates"}:
+                position_name = f"{office} - {pure_state}"
+                position_id = b64_id("Position", office, state_code)
+            else:
+                position_name = f"{office} - {pure_state}" if office else f"State Office - {pure_state}"
+                position_id = b64_id("Position", position_name, state_code)
         else:
-            district = _district_from_race_label(race_label)
-            suffix = f" {district}" if district else ""
-            position_name = f"U.S. House - {pure_state}{suffix}"
-            position_id = b64_id("Position", "U.S. House", state_code, district or "")
+            pos_level = "FEDERAL"
+            if chamber == "senate":
+                position_name = f"U.S. Senate - {pure_state}"
+                position_id = b64_id("Position", "U.S. Senate", state_code)
+            else:
+                district = _district_from_race_label(race_label)
+                suffix = f" {district}" if district else ""
+                position_name = f"U.S. House - {pure_state}{suffix}"
+                position_id = b64_id("Position", "U.S. House", state_code, district or "")
 
         if is_runoff:
             election_name = f"{pure_state} {year} {phase} Runoff Election"
             election_day_iso = _election_day_for(pure_state, year, "Runoff")
         else:
             election_name = f"{pure_state} {year} {phase} Election"
-            election_day_iso = _election_day_or_default(pure_state, year, phase)
+            election_day_iso = _election_day_or_default(pure_state, year, phase, scope=scope)
 
         election_id = b64_id("Election", state_code, str(year), f"{phase}{' Runoff' if is_runoff else ''}")
         pos_elex_id = b64_id("PositionElection", state_code, str(year), race_label)
@@ -115,18 +148,19 @@ def build_position_elections(races_df: pd.DataFrame, candidates_df: pd.DataFrame
             "position": {
                 "id": position_id,
                 "name": position_name,
-                "level": "FEDERAL",
+                "level": pos_level,
                 "state": state_code
             },
             "candidacies": cands
         }
 
-        key = (state_code, year, race_label)
+        key = (state_code, year, race_label, scope)
         if key not in keys_seen:
             out.append(pe)
             keys_seen.add(key)
 
     return out
+
 
 def position_elections_to_rows(unified: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -161,5 +195,3 @@ def position_elections_to_rows(unified: List[Dict[str, Any]]) -> List[Dict[str, 
                         "candidacyWithdrawn": c.get("withdrawn"),
                         "candidacyResult": c.get("result")})
     return rows
-
-
