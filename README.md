@@ -63,39 +63,49 @@ pip install -r requirements.txt
 
 ### Scrape federal Senate results (general elections)
 
+```bash
 python -m bp_scraper.cli.main \
   --year 2024 \
   --scope federal \
   --chamber senate \
   --verbose
+```
 
 ### Scrape federal House results (district pages)
 
+```bash
 python -m bp_scraper.cli.main \
   --year 2024 \
   --scope federal \
   --chamber house
+```
 
 ### Scrape state elections for a specific state
 
+```bash
 python -m bp_scraper.cli.main \
   --year 2024 \
   --scope state \
   --state VA \
   --offices governor,state_upper
+```
 
 ### Scrape primaries instead of general elections
 
+```bash
 python -m bp_scraper.cli.main \
   --year 2024 \
   --primary
+```
 
 ### Scrape a single page URL
 
+```bash
 python -m bp_scraper.cli.main \
   --year 2024 \
   --state-url "https://ballotpedia.org/United_States_Senate_election_in_Arizona,_2024" \
   --verbose
+```
 
 ## CLI Reference
 
