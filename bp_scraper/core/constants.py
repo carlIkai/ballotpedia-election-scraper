@@ -1,9 +1,25 @@
 from __future__ import annotations
+
+"""
+Shared constants and compiled patterns used across bp_scraper.
+
+This module centralizes:
+- HTTP session defaults (base URL, headers, retry/backoff knobs)
+- state name/USPS mappings and House at-large metadata
+- party normalization lookups used during parsing and cleanup
+- canonical Ballotpedia URL patterns used to validate discovery output
+- regex patterns reused across parsing modules (percentages, headers, year detection, etc.)
+
+Keeping these definitions in one place avoids drift and ensures parsing logic stays consistent
+across discovery, scraping, and transform layers.
+"""
+
 import re
 import requests
 
 BASE = "https://ballotpedia.org/"
 
+# Default request headers.
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -14,14 +30,17 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+# Shared requests session.
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
+# Request pacing and retry defaults.
 DEFAULT_DELAY = 0.6
 DEFAULT_RETRIES = 5
 DEFAULT_JITTER = 0.35
 DEFAULT_BACKOFF = 1.6
 
+# Canonical USPS abbreviations.
 USPS = {
     "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA","Colorado":"CO",
     "Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI","Idaho":"ID",
@@ -34,14 +53,18 @@ USPS = {
     "West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC"
 }
 
+# USPS abbreviation mapped to state name map.
 USPS_INV = {v: k for k, v in USPS.items()}
 
+# At large House jurisdictions.
 HOUSE_AT_LARGE_STATES = {
     "Alaska","Delaware","North Dakota","South Dakota","Vermont","Wyoming","District of Columbia"
 }
 
+# Percent parsing (e.g., "52%" or "52.3%").
 PCT_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%")
 
+# Party affiliation mapped from Ballotpedia CSS class names.
 PARTY_FROM_CLASS = {
     "cc-democratic": "Democratic",
     "cc-republican": "Republican",
@@ -52,8 +75,10 @@ PARTY_FROM_CLASS = {
     "cc-other": "Other",
 }
 
+# Party abbreviations from parentheticals.
 PAREN_PARTY = {"d":"Democratic","r":"Republican","l":"Libertarian","g":"Green","i":"Independent"}
 
+# Primary header label is mapped to canonical party name.
 PRIMARY_PARTY_FROM_LABEL = {
     "democratic primary": "Democratic",
     "republican primary": "Republican",
@@ -69,6 +94,7 @@ PRIMARY_PARTY_FROM_LABEL = {
     "independent primary": "Independent",
 }
 
+# Extra party key normalization.
 EXTRA_PARTY_KEYS = {
     "peace and freedom": "Peace and Freedom",
     "socialist workers": "Socialist Workers",
@@ -83,15 +109,25 @@ EXTRA_PARTY_KEYS = {
     "independent american": "Independent American",
 }
 
+# Fuzzy party token is mapped to canonical party name.
+PRIMARY_PARTY_MAP = {
+    "democratic":"Democratic","republican":"Republican","libertarian":"Libertarian","green":"Green",
+    "independent":"Independent","independent american":"Independent American","nonpartisan":"Nonpartisan",
+    "working families":"Working Families","aloha":"Aloha ʻĀina",
+    "constitution":"Constitution","progressive":"Progressive",
+}
+
+# Overview URL templates.
 SENATE_OVERVIEW_TEMPLATE = "United_States_Senate_elections,_{year}"
 HOUSE_OVERVIEW_TEMPLATE  = "United_States_House_of_Representatives_elections,_{year}"
-
 STATE_ELECTIONS_OVERVIEW_TEMPLATE = "{state}_elections,_{year}"
 
+# Canonical URL patterns.
 CANON_SENATE_STATE_URL = re.compile(
     r"/United_States_Senate_(special_)?election_in_[^,]+,_\d{4}$", re.I
 )
 
+# Apostrophe variants used in URL matching.
 APOS_CHAR_CLASS = r"(?:'|\u2019)"
 APOS_ENC_CLASS = r"(?:%27|%E2%80%99)"
 APOS_ANY = rf"(?:{APOS_ENC_CLASS}|{APOS_CHAR_CLASS})"
@@ -133,33 +169,33 @@ CANON_STATE_LEG_DISTRICT_URL = re.compile(
     re.I
 )
 
-
+# Canonical URL aliases.
 CANON_STATE_LTGOV_URL = CANON_STATE_LT_GOV_URL
 CANON_STATE_ATTORNEY_GENERAL_URL = CANON_STATE_AG_URL
 CANON_STATE_STATE_LOWER_URL = CANON_STATE_LOWER_URL
 CANON_STATE_STATE_UPPER_URL = CANON_STATE_UPPER_URL
 
+# General election header patterns.
 HEADER_OK_PATTERNS_GENERAL = [
     re.compile(r"\bGeneral(?:\s+runoff)?\s+election\b", re.I),
     re.compile(r"\bGeneral(?:\s+runoff)?\s+election\s+results\b", re.I),
     re.compile(r"\bRunoff\s+election\b", re.I),
 ]
 
+# Primary header patterns.
 PRIMARY_WORD_RE = re.compile(r"\bprimary\b", re.I)
 PRIMARY_RUNOFF_RE = re.compile(r"\brunoff\b", re.I)
+
+# Louisiana blanket/jungle primary patterns.
 LA_PRIMARY_PATTERNS = [re.compile(r"\bNonpartisan\s+blanket\s+primary\b", re.I)]
 
-PRIMARY_PARTY_MAP = {
-    "democratic":"Democratic","republican":"Republican","libertarian":"Libertarian","green":"Green",
-    "independent":"Independent","independent american":"Independent American","nonpartisan":"Nonpartisan",
-    "working families":"Working Families","aloha":"Aloha ʻĀina",
-    "constitution":"Constitution","progressive":"Progressive",
-}
-
+# Year parsing.
 YEAR_ONLY_RE = re.compile(r"\b(19|20)\d{2}\b")
 PAST_ELEX_RE = re.compile(r"\b(past|previous)\s+elections\b", re.I)
 
+# Write in parsing.
 AGG_WRITEIN_PAT = re.compile(r"^\s*Other/Write-in votes\s*$", re.I)
 WRITEIN_SUFFIX = re.compile(r"\s*\(Write-in\)\s*$", re.I)
 
+# Ordinal parsing (e.g., "1st", "2nd").
 ORD_RE = re.compile(r"(\d+)(st|nd|rd|th)", re.I)

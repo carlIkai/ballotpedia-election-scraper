@@ -1,14 +1,35 @@
 from __future__ import annotations
+
+"""
+Election date extraction and caching.
+
+This module parses election date strings from Ballotpedia pages and stores normalized
+ISO dates in an in-memory cache keyed by (state, year, phase).
+
+Phases tracked:
+- Primary
+- General
+- Runoff
+
+The cache is populated opportunistically during scraping and is used to enrich unified
+PositionElection outputs when explicit dates are present on the source pages.
+"""
+
 import re
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
+
 from bs4 import BeautifulSoup, Tag
 
+# (state, year, phase) -> ISO date string ("YYYY-MM-DD")
 ELECTION_DAY_BY_KEY: Dict[Tuple[str, int, str], str] = {}
 
+# US long-form date strings like "November 8, 2024".
 US_LONG_DATE_RE = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s*(\d{4})\b"
 )
+
+# Election phase label followed by a US long-form date (within the same block of text).
 LABEL_AND_DATE_RE = re.compile(
     r"\b(Primary|Nonpartisan primary|General(?: runoff)?|Runoff|Primary runoff)\b.*?\b([A-Za-z]+\s+\d{1,2},\s*\d{4})",
     re.I,
@@ -16,6 +37,14 @@ LABEL_AND_DATE_RE = re.compile(
 
 
 def _parse_us_date(date_str: str) -> Optional[str]:
+    """Parse 'Month D, YYYY' into an ISO date string.
+
+    Args:
+        date_str: Date string in Ballotpedia-style long format.
+
+    Returns:
+        ISO date string ("YYYY-MM-DD") or None if parsing fails.
+    """
     try:
         parsed_date = datetime.strptime(date_str.strip(), "%B %d, %Y").date()
         return parsed_date.isoformat()
@@ -24,14 +53,29 @@ def _parse_us_date(date_str: str) -> Optional[str]:
 
 
 def compute_federal_general_election_day(year: int) -> str:
+    """Compute the US federal general election day for a given year.
+
+    This uses the standard rule: the Tuesday following the first Monday in November.
+
+    Args:
+        year: Election year.
+
+    Returns:
+        ISO date string ("YYYY-MM-DD").
+    """
     first_day_of_november = date(year, 11, 1)
-    while first_day_of_november.weekday() != 0:  
+
+    # Find the first Monday in November.
+    while first_day_of_november.weekday() != 0:
         first_day_of_november += timedelta(days=1)
+
+    # Election Day is the following Tuesday.
     election_day = first_day_of_november + timedelta(days=1)
     return election_day.isoformat()
 
 
 def _iso_in_year(iso_date_string: str, year: int) -> bool:
+    """Return True if an ISO date string belongs to the given year."""
     try:
         return datetime.fromisoformat(iso_date_string).year == year
     except Exception:
@@ -39,6 +83,7 @@ def _iso_in_year(iso_date_string: str, year: int) -> bool:
 
 
 def _iso_date(iso_date_string: Optional[str]) -> Optional[date]:
+    """Parse an ISO date string into a date object."""
     try:
         return datetime.fromisoformat(iso_date_string).date() if iso_date_string else None
     except Exception:
@@ -46,10 +91,27 @@ def _iso_date(iso_date_string: Optional[str]) -> Optional[date]:
 
 
 def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -> None:
+    """Extract election dates from a Ballotpedia page and populate the cache.
+
+    The parser scans for "Election dates" sections and common result summary paragraphs,
+    then extracts labeled dates for Primary/General/Runoff.
+
+    Dates are stored in ELECTION_DAY_BY_KEY under (state, year, phase). Values are ISO
+    strings ("YYYY-MM-DD"). Validation is conservative to avoid caching incorrect dates.
+
+    Mutates:
+        ELECTION_DAY_BY_KEY: Adds/updates entries for the given state/year.
+
+    Args:
+        soup: Parsed page soup.
+        state: State name for cache keying.
+        year: Election year used for filtering extracted dates.
+    """
     from bp_scraper.parsing.normalize import nws
 
     text_blocks: List[str] = []
 
+    # Any element containing "election dates" is treated as a candidate extraction block.
     for element in soup.find_all(True):
         element_text = nws(element.get_text(" "))
         if not element_text:
@@ -57,6 +119,7 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
         if "election dates" in element_text.lower():
             text_blocks.append(element_text)
 
+    # Expand content immediately under an "Election dates" header until the next header.
     for header_tag in soup.find_all(["h2", "h3", "h4"]):
         header_text = nws(header_tag.get_text(" "))
         if re.search(r"\bElection dates\b", header_text, flags=re.I):
@@ -66,10 +129,12 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
                 if isinstance(sibling, Tag) and sibling.name in {"h2", "h3", "h4"}:
                     break
 
+    # Result summaries sometimes include a phase cue ("primary", "general", "runoff") plus a date.
     for paragraph_tag in soup.select("p.results_text"):
         paragraph_text = nws(paragraph_tag.get_text(" "))
         if not paragraph_text:
             continue
+
         lower_text = paragraph_text.lower()
         inferred_phase: Optional[str] = None
         if "runoff" in lower_text:
@@ -80,14 +145,18 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
             inferred_phase = "General"
         if not inferred_phase:
             continue
+
         date_match = re.search(r"[A-Za-z]+\s+\d{1,2},\s*\d{4}", paragraph_text)
         if not date_match:
             continue
+
         iso_date_str = _parse_us_date(date_match.group(0))
         if not iso_date_str or not _iso_in_year(iso_date_str, year):
             continue
+
         text_blocks.append(f"{inferred_phase}: {date_match.group(0)}")
 
+    # Scan the full page text when no structured blocks are found.
     if not text_blocks:
         text_blocks = [nws(soup.get_text(" "))]
 
@@ -96,10 +165,12 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
         for match_obj in LABEL_AND_DATE_RE.finditer(text_block):
             label_text = match_obj.group(1).strip().lower()
             date_str = match_obj.group(2)
+
             iso_date_str = _parse_us_date(date_str)
             if not iso_date_str:
                 continue
 
+            # Normalize phase labels into {Primary, General, Runoff}.
             if "nonpartisan" in label_text and "primary" in label_text:
                 phase_label = "Primary"
             elif label_text.startswith("primary") or " primary" in label_text:
@@ -115,6 +186,7 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
 
             found_raw[phase_label] = iso_date_str
 
+    # Cache General if valid.
     if "General" in found_raw and _iso_in_year(found_raw["General"], year):
         ELECTION_DAY_BY_KEY[(state, year, "General")] = found_raw["General"]
 
@@ -122,12 +194,16 @@ def parse_election_dates_from_page(soup: BeautifulSoup, state: str, year: int) -
     if "Primary" in found_raw and _iso_in_year(found_raw["Primary"], year):
         primary_date = _iso_date(found_raw["Primary"])
         general_day_date = _iso_date(compute_federal_general_election_day(year))
+
+        # Reject primaries that appear after the federal general election baseline.
         if primary_date and (not general_day_date or primary_date <= general_day_date):
             primary_iso_valid = found_raw["Primary"]
 
     runoff_iso_valid: Optional[str] = None
     if "Runoff" in found_raw and _iso_in_year(found_raw["Runoff"], year):
         runoff_date = _iso_date(found_raw["Runoff"])
+
+        # Runoffs should not precede primaries when a primary is known.
         if runoff_date:
             if (primary_iso_valid and runoff_date >= _iso_date(primary_iso_valid)) or (not primary_iso_valid):
                 runoff_iso_valid = found_raw["Runoff"]

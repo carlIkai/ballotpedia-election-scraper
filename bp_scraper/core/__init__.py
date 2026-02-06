@@ -1,1 +1,1 @@
-"""Core config/constants/models/types."""
+"""Core types and constants for bp_scraper."""

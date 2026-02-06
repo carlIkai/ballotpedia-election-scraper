@@ -1,4 +1,18 @@
-from __future__ import annotations
+"""
+bp_scraper CLI entrypoint.
+
+This module orchestrates:
+- page discovery (federal or state scope)
+- scraping pages into race summaries + candidate cards
+- normalization/deduping
+- writing raw outputs (races/candidates) as CSV + JSON
+- building unified PositionElection objects and writing CSV + JSON
+
+Design notes:
+- This file contains orchestration logic and minimal parsing logic.
+- Parsing/scraping/normalization belong in bp_scraper.* modules to keep this CLI thin.
+"""
+
 
 import argparse
 import json
@@ -41,6 +55,14 @@ from bp_scraper.parsing.mapping import (
 
 
 def _parse_offices_arg(raw: Optional[str]) -> Optional[List[str]]:
+    """Parse --offices CLI arg into a normalized list.
+
+    Args:
+        raw: Comma-separated office keys (e.g., "governor,state_lower") or None.
+
+    Returns:
+        List of nonempty office keys or None if input was falsy.
+    """
     if not raw:
         return None
     parts = [p.strip() for p in raw.split(",")]
@@ -48,17 +70,37 @@ def _parse_offices_arg(raw: Optional[str]) -> Optional[List[str]]:
 
 
 def _race_title_for_run(args, *, state_name: Optional[str]) -> str:
+    """Create a human-friendly run title used for slug and output names.
+
+    Args:
+        args: Parsed CLI arguments.
+        state_name: Normalized state filter name , if state scope, otherwise None.
+
+    Returns:
+        A descriptive title string.
+    """
     mode = "primary" if args.primary else "general"
 
     if args.scope == "state":
+        
+        # Use normalized state names so output filenames stay stable across input formats.
         st = normalize_state_name(state_name or args.state or "state")
         return f"{st} state elections {args.year} {mode}"
-
 
     return race_title_for_chamber(args.chamber, args.year)
 
 
 def main() -> None:
+    """CLI entrypoint.
+
+    Side effects:
+        - Makes HTTP requests via scrape/discovery functions.
+        - Writes multiple CSV/JSON files under --outdir.
+
+    Exit behavior:
+        - Raises SystemExit for invalid argument combos.
+        - Prints warnings when --verbose is used.
+    """
     ap = argparse.ArgumentParser(
         description="Scrape Ballotpedia pages and output unified PositionElection JSON & CSV."
     )
@@ -105,6 +147,7 @@ def main() -> None:
 
     office_list = _parse_offices_arg(args.offices)
 
+    # Collect raw scrape outputs first. DataFrame normalization comes after discovery/scrape completes.
     race_summaries: List[Dict[str, object]] = []
     all_cards: List[dict] = []
     seen_log_keys = set()
@@ -116,6 +159,8 @@ def main() -> None:
             raise SystemExit("State scope requires --state (e.g., --state VA or --state Virginia)")
 
     if args.state_url:
+        
+        # Single URL mode is primarily for debugging scraper output without discovery noise.
         chamber_for_scrape = "state" if args.scope == "state" else args.chamber
 
         _, summaries, cards = scrape_page(
@@ -129,6 +174,8 @@ def main() -> None:
             scope=args.scope,
         )
         for summary in summaries:
+            
+            # Keep the race if a winner or any candidate cards are found.
             if (summary.get("winner_name") is not None) or cards:
                 race_summaries.append(summary)
         all_cards.extend(cards)
@@ -167,6 +214,8 @@ def main() -> None:
             if args.chamber == "senate":
                 target_urls = [(state, link) for state, _race, link in state_pages]
             else:
+                
+                # House results are reported at the district level, so expand each state page into per district URLs.
                 for state, _race, link in state_pages:
                     district_links = discover_house_district_pages(
                         state,
@@ -216,6 +265,8 @@ def main() -> None:
                 print("\n[abort] interrupted by user")
                 break
             except Exception as e:
+                
+                # Failures are logged and skipped so one bad page does not kill the run.
                 if args.verbose:
                     print(f"[warn] {state}: {e} — {link}")
 
@@ -226,6 +277,7 @@ def main() -> None:
         columns=["state", "race", "year", "name", "party", "total_votes", "incumbent", "is_winner", "is_advancer", "source_url"]
     )
 
+    # Normalize state names before dedupe/unify to avoid mismatched joins caused by formatting differences.
     if not races_df.empty:
         races_df["state"] = races_df["state"].map(normalize_state_name)
     if not cards_df.empty:
@@ -235,6 +287,8 @@ def main() -> None:
     cards_df = dedupe_candidates_df(cards_df)
 
     if (args.scope == "federal") and (args.chamber == "house") and (not races_df.empty):
+        
+        # Ballotpedia House primary race titles vary across pages. Rewrite to a canonical label so joins are reliable.
         is_house = races_df["race"].str.contains("U.S. House", case=False, na=False)
         is_primary = races_df["race"].str.contains("primary", case=False, na=False)
         mask = is_house & is_primary
@@ -260,6 +314,7 @@ def main() -> None:
 
     if not cards_df.empty:
         def _final_party(row):
+            """Apply known one-off corrections where Ballotpedia labeling is inconsistent."""
             party = row["party"]
             if (
                 (str(row["state"]).lower() == "utah")
@@ -279,6 +334,7 @@ def main() -> None:
         )
 
         def _clean_adv(cell, state):
+            """Normalize advancers to a display-cleaned list when possible."""
             if isinstance(cell, list):
                 return display_clean_list(cell, state)
             if isinstance(cell, str):
@@ -295,6 +351,7 @@ def main() -> None:
     races_df = trim_string_columns(races_df)
     cards_df = trim_string_columns(cards_df)
 
+    # Save races and candidates in CSV and JSON.
     races_csv = outdir / f"races-{stamp}.csv"
     cards_csv = outdir / f"candidates-{stamp}.csv"
     races_df_csv = serialize_list_col_as_json(races_df.copy(), "advancers")
@@ -307,11 +364,9 @@ def main() -> None:
     races_json.write_text(json.dumps(json.loads(races_df_json.to_json(orient="records")), indent=2))
     cards_json.write_text(json.dumps(json.loads(cards_df.to_json(orient="records")), indent=2))
 
-
     chamber_for_unify = "state" if args.scope == "state" else args.chamber
     unified = build_position_elections(races_df, cards_df, chamber=chamber_for_unify, scope=args.scope)
 
-   
     race_title = _race_title_for_run(args, state_name=state_filter_norm)
     race_slug = slugify(race_title)
 
