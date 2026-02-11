@@ -1,13 +1,21 @@
 [project]
 name = "bp-scraper"
 version = "0.1.0"
-description = "Ballotpedia scraper (reorganized, no shims)"
+description = "Ballotpedia scraper"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "requests>=2.32",
   "beautifulsoup4>=4.12",
-  "pandas>=2.2"
+  "pandas>=2.2",
+  "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "requests-mock>=1.12",
 ]
 
 [project.scripts]
@@ -16,3 +24,16 @@ bp-scraper = "bp_scraper.cli.main:main"
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "--cov=bp_scraper",
+  "--cov-report=term-missing",
+]
+markers = [
+  "integration: tests that hit the network (deselect with '-m \"not integration\"')",
+]

@@ -301,3 +301,44 @@ For state scope:
 1. Update canonical URL patterns in `core/constants.py`
 2. Update discovery mapping in `parsing/discovery.py`
 3. Update race label inference in the scrape pipeline (`pipelines/scrape.py` or equivalent logic)
+
+## Testing
+
+This project includes a structured test suite built with `pytest`.
+
+The test suite validates core parsing logic, normalization behavior, URL canonicalization, summarization logic, and integration-level scraping behavior.
+
+#### Unit Tests
+
+- Validate small, deterministic functions  
+- Cover normalization helpers, URL canonicalization, summarization logic, and label parsing utilities  
+
+#### Integration Tests
+
+- Validate higher-level scraping behavior  
+- Use controlled fixture HTML files  
+- Ensure correct section detection, table parsing, and race summarization  
+
+### Running Tests
+
+Run the full test suite:
+
+```bash
+pytest -v
+```
+
+Run with coverage:
+
+```bash
+pytest --cov=bp_scraper --cov-report=term-missing
+```
+
+### Coverage
+
+Coverage configuration is defined in `pyproject.toml`.
+
+The suite is designed to:
+
+- Protect parsing logic from regressions  
+- Validate expected behavior across markup variations  
+- Support safe refactoring of scraping and transformation logic  
