@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions 
+*.so
+
+# Virtual Environments
+venv/
+env/
+.venv/
+bp_scraper_no_shims/
+vdh_scraper/
+
+# Environment Variables
+.env
+.env.*
+*.env
+
+# Build / Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs
+*.log
+
+# Jupyter / Data Science
+.ipynb_checkpoints/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Testing / Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Scraper Outputs 
+data/
+outputs/
+exports/
+*.csv
+*.json
+
+!data/.gitkeep
+!outputs/.gitkeep
+
+# Temporary / Debug Files
+tmp/
+temp/
+*.tmp
+
+# Mac / System junk
+.AppleDouble
+.LSOverride
+
+# CLI artifacts / runtime
+*.pid
+*.seed
+
